@@ -127,9 +127,30 @@ For CPU-only use:
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
 ```
 
-Select **CPU** and **CPU H.264** in the UI. GPU defaults are not silently changed
-when CUDA or NVENC is unavailable. CPU H.264 export requires FFmpeg with libx264
-available on `PATH`.
+On startup, the UI preselects **CPU** and **CPU H.264** when CUDA is unavailable,
+and **GPU (CUDA)** and **NVIDIA NVENC** when it is available. Selecting NVENC
+while rendering on CPU is still rejected by settings validation. CPU H.264 export
+requires FFmpeg with libx264 available on `PATH`.
+
+## INSTALL (LINUX / CUE SANDBOX)
+
+Use Python 3.11 or 3.12. From the repository directory:
+
+```bash
+python3 -m venv .venv
+.venv/bin/python -m pip install --upgrade pip
+.venv/bin/python -m pip install torch==2.8.0 torchvision==0.23.0 --index-url https://download.pytorch.org/whl/cpu
+.venv/bin/python -m pip install -r requirements.txt
+```
+
+The CPU PyTorch wheel is the right choice for a Cue/Linux sandbox without an
+NVIDIA GPU. With a compatible NVIDIA driver, install the CUDA wheels and
+`requirements-gpu.txt` as shown in the Windows section instead. Download the
+optional segmentation checkpoint only when needed:
+
+```bash
+.venv/bin/python scripts/download_model.py
+```
 
 ## SUBJECT SEGMENTATION MODEL
 
@@ -153,7 +174,7 @@ Target: `assets/v181d/model.safetensors` (ignored by Git).
 
 ## RUN LOCALLY
 
-Double-click `start.bat`, or run:
+On Windows, double-click `start.bat`, or run:
 
 ```powershell
 .\start.ps1
@@ -161,12 +182,28 @@ Double-click `start.bat`, or run:
 .\start.ps1 -Port 7861
 ```
 
-The launcher uses this repository's `.venv`, starts a hidden `pythonw.exe`
-process, opens the browser, and continues running after the terminal closes.
-It prints the server PID; use `Stop-Process -Id <PID>` to stop that process.
-Logs are appended to `logs/app.log`.
+The Windows launcher uses this repository's `.venv`, starts a hidden
+`pythonw.exe` process, opens the browser, and continues running after the
+terminal closes. It prints the server PID; use `Stop-Process -Id <PID>` to stop
+that process. Logs are appended to `logs/app.log`.
 
-For a foreground server:
+On Linux/macOS, run the foreground launcher (defaults: localhost, port 7860):
+
+```bash
+./start.sh
+# Another port:
+./start.sh --port 7861
+# Explicitly listen on all interfaces:
+./start.sh --host 0.0.0.0 --port 7860
+```
+
+`start.sh` uses `.venv/bin/python` and prints a diagnostic and exits if the
+virtual environment or its Python interpreter is missing. For a foreground
+server without the launcher:
+
+```bash
+.venv/bin/python app.py --host 0.0.0.0 --port 7860
+```
 
 ```powershell
 .\.venv\Scripts\python.exe app.py --port 7860 --open --log
@@ -174,10 +211,13 @@ For a foreground server:
 .\.venv\Scripts\python.exe app.py --log logs\session.log
 ```
 
-The UI binds only to [127.0.0.1:7860](http://127.0.0.1:7860), with public sharing
-and Gradio analytics disabled. Rendering is serialized; the queue holds at most
-eight pending jobs. MP4 files are stored in `outputs/` and can be downloaded from
-the UI. Remove old outputs manually when no longer needed.
+The UI binds to [127.0.0.1:7860](http://127.0.0.1:7860) by default, with
+`share=False` and Gradio analytics disabled. Binding to `0.0.0.0` is an explicit
+opt-in. A phone can connect only if the existing network, routing, and firewall
+allow it to reach this machine's IP address; no tunnel or public share is
+enabled or required. Rendering is serialized; the queue holds at most eight
+pending jobs. MP4 files are stored in `outputs/` and can be downloaded from the
+UI. Remove old outputs manually when no longer needed.
 
 The default drawing/hold split is 70/30. Independently, ink/fill within the
 drawing phase is 45/55. Every `Settings` dataclass field is editable, using its

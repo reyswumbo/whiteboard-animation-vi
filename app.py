@@ -37,9 +37,26 @@ def render_image(image, values, progress=None):
         raise gr.Error(str(exc)) from exc
 
 
-def setting_control(item):
+def cuda_available():
+    try:
+        import torch
+    except Exception:
+        return False
+    try:
+        return bool(torch.cuda.is_available())
+    except Exception:
+        return False
+
+
+def runtime_defaults(cuda):
+    return {'device': 'cuda' if cuda else 'cpu',
+            'encoder': 'nvenc' if cuda else 'cpu'}
+
+
+def setting_control(item, defaults=None):
     spec = item.metadata
-    options = dict(label=spec['label'], value=item.default)
+    defaults = defaults or {}
+    options = dict(label=spec['label'], value=defaults.get(item.name, item.default))
     if spec['choices']:
         return gr.Radio(choices=spec['choices'], **options) if item.name == 'mode' else gr.Dropdown(choices=spec['choices'], **options)
     if isinstance(item.default, bool):
@@ -52,14 +69,16 @@ def setting_control(item):
     if item.name == 'paper_color':
         return gr.ColorPicker(**options)
     if item.name in ('rig_json', 'ink_json'):
-        defaults = ({key: value for key, value in RIG_SETTINGS.items() if key not in PROTECTED_RIG_KEYS}
-                    if item.name == 'rig_json' else INK_DEFAULTS)
-        options['value'] = json.dumps(defaults, indent=2)
+        json_defaults = ({key: value for key, value in RIG_SETTINGS.items() if key not in PROTECTED_RIG_KEYS}
+                         if item.name == 'rig_json' else INK_DEFAULTS)
+        options['value'] = json.dumps(json_defaults, indent=2)
         return gr.Textbox(lines=12, max_lines=24, **options)
     return gr.Textbox(**options)
 
 
-def build_ui():
+def build_ui(*, cuda=None):
+    cuda = cuda_available() if cuda is None else bool(cuda)
+    defaults = runtime_defaults(cuda)
     with gr.Blocks(title='Handdraw', analytics_enabled=False) as demo:
         controls = {}
         items_by_name = {item.name: item for item in fields(Settings)}
@@ -72,15 +91,15 @@ def build_ui():
         with gr.Group(elem_id='quick-settings'):
             with gr.Row(equal_height=False):
                 with gr.Column(scale=2, min_width=300):
-                    controls['mode'] = setting_control(items_by_name['mode'])
+                    controls['mode'] = setting_control(items_by_name['mode'], defaults)
                     gr.Markdown('Both modes prioritize characters. **Quick** colors background clusters from left to right.', elem_classes='hint')
                 with gr.Column(scale=2, min_width=300):
                     with gr.Row():
                         for name in ('duration', 'fps'):
-                            controls[name] = setting_control(items_by_name[name])
+                            controls[name] = setting_control(items_by_name[name], defaults)
                     with gr.Row():
                         for name in ('show_hand', 'subject_first'):
-                            controls[name] = setting_control(items_by_name[name])
+                            controls[name] = setting_control(items_by_name[name], defaults)
         with gr.Row(elem_id='export-row'):
             submit = gr.Button('Render & export MP4', variant='primary', size='lg', scale=1, min_width=240)
             download = gr.File(label='Download MP4', interactive=False, type='filepath', scale=1, min_width=240)
@@ -91,13 +110,13 @@ def build_ui():
                     for group in groups:
                         with gr.Accordion(group_labels.get(group, group), open=False):
                             if group == 'Video export':
-                                gr.Markdown('No NVIDIA GPU? Select **CPU** and **CPU H.264**.', elem_classes='hint')
+                                gr.Markdown('**CPU** and **CPU H.264** are preselected when CUDA is unavailable.', elem_classes='hint')
                             items = [item for item in fields(Settings)
                                      if item.metadata['group'] == group and item.name not in controls]
                             for first in range(0, len(items), 2):
                                 with gr.Row():
                                     for item in items[first:first + 2]:
-                                        controls[item.name] = setting_control(item)
+                                        controls[item.name] = setting_control(item, defaults)
         with gr.Accordion('Render details', open=False):
             report = gr.JSON(label='Report')
 
@@ -111,14 +130,23 @@ def build_ui():
     return demo
 
 
-def main():
+def parse_args(argv=None):
     parser = argparse.ArgumentParser(description='Local Handdraw UI')
+    parser.add_argument('--host', default='127.0.0.1',
+                        help='Bind address; use 0.0.0.0 to allow network access (default: 127.0.0.1)')
     parser.add_argument('--port', type=int, default=7860)
     parser.add_argument('--open', action='store_true', dest='open_browser')
     parser.add_argument('--log', nargs='?', const=str(ROOT / 'logs' / 'app.log'), metavar='PATH')
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
+    if not args.host.strip():
+        parser.error('--host must not be empty')
     if not 1 <= args.port <= 65535:
         parser.error('--port must be 1..65535')
+    return args
+
+
+def main():
+    args = parse_args()
     if args.log:
         path = Path(args.log).resolve()
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -129,7 +157,7 @@ def main():
     else:
         logging.basicConfig(level=logging.INFO)
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    build_ui().launch(server_name='127.0.0.1', server_port=args.port, share=False,
+    build_ui().launch(server_name=args.host, server_port=args.port, share=False,
                       inbrowser=args.open_browser, allowed_paths=[str(OUTPUT_DIR.resolve())],
                       blocked_paths=[str(ROOT / '.venv'), str(ROOT / 'logs'),
                                      str(ROOT / 'assets' / 'v181d' / 'model.safetensors')],

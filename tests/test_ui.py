@@ -13,14 +13,15 @@ from handdraw.settings import INK_DEFAULTS, RIG_SETTINGS, Settings
 
 def test_controls_match_native_metadata_and_defaults():
     app = importlib.import_module('app')
-    demo = app.build_ui()
+    demo = app.build_ui(cuda=False)
     try:
         assert set(demo.setting_controls) == {item.name for item in fields(Settings)}
+        runtime_defaults = {'device': 'cpu', 'encoder': 'cpu'}
         for item in fields(Settings):
             component = demo.setting_controls[item.name]
             assert component.label == item.metadata['label']
             if item.name not in ('rig_json', 'ink_json'):
-                assert component.value == item.default
+                assert component.value == runtime_defaults.get(item.name, item.default)
             if item.metadata['low'] is not None:
                 assert component.minimum == item.metadata['low']
                 assert component.maximum == item.metadata['high']
@@ -37,6 +38,32 @@ def test_controls_match_native_metadata_and_defaults():
         assert demo._queue.default_concurrency_limit == 1
     finally:
         demo.close()
+
+
+@pytest.mark.parametrize(('cuda', 'device', 'encoder'), [
+    (False, 'cpu', 'cpu'),
+    (True, 'cuda', 'nvenc'),
+])
+def test_ui_defaults_follow_cuda_availability(cuda, device, encoder):
+    app = importlib.import_module('app')
+    demo = app.build_ui(cuda=cuda)
+    try:
+        assert demo.setting_controls['device'].value == device
+        assert demo.setting_controls['encoder'].value == encoder
+        Settings(device=device, encoder=encoder).validate()
+    finally:
+        demo.close()
+
+
+def test_host_defaults_to_loopback_and_allows_explicit_opt_in():
+    app = importlib.import_module('app')
+    assert app.parse_args([]).host == '127.0.0.1'
+    assert app.parse_args(['--host', '0.0.0.0']).host == '0.0.0.0'
+    assert app.parse_args(['--host', '0.0.0.0', '--port', '7861']).port == 7861
+    with pytest.raises(SystemExit):
+        app.parse_args(['--host', ''])
+    with pytest.raises(SystemExit):
+        app.parse_args(['--port', '0'])
 
 
 def test_render_adapter_returns_paths_and_forwards_progress(monkeypatch, tmp_path):
